@@ -91,9 +91,15 @@ type ParsedGenerateArgs = {
   history: string[];
   query: string;
   modelOverride?: string;
+  thinkingLevel?: string;
   debug: boolean;
   debugFormat: DebugFormat;
+  help: boolean;
 };
+
+const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+
+type SupportedThinkingLevel = (typeof VALID_THINKING_LEVELS)[number];
 
 function normalizeShellName(shellName: string | undefined): string {
   const name = shellName?.split("/").pop();
@@ -136,6 +142,21 @@ function isDebugEnabled(
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+function parseThinkingLevel(value: string | undefined): SupportedThinkingLevel | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (VALID_THINKING_LEVELS.includes(normalized as SupportedThinkingLevel)) {
+    return normalized as SupportedThinkingLevel;
+  }
+
+  throw new Error(
+    `Unsupported thinking level: ${value}. Expected one of ${VALID_THINKING_LEVELS.join(", ")}`,
+  );
+}
+
 function parseGenerateArgs(
   argv: string[],
   envShell: string | undefined,
@@ -149,8 +170,10 @@ function parseGenerateArgs(
       cwd: { type: "string" },
       "history-entry": { type: "string", multiple: true },
       model: { type: "string" },
+      thinking: { type: "string" },
       debug: { type: "boolean" },
       "debug-pretty": { type: "boolean" },
+      help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
     strict: false,
@@ -172,14 +195,18 @@ function parseGenerateArgs(
     history,
     query: queryWords.join(" ").trim(),
     modelOverride,
+    thinkingLevel: parseThinkingLevel(
+      typeof values.thinking === "string" ? values.thinking : undefined,
+    ),
     debug: isDebugEnabled(values.debug === true, prettyDebug, debugEnv),
     debugFormat: prettyDebug ? "pretty" : "ndjson",
+    help: values.help === true,
   };
 }
 
 function parseModelOverride(
   modelOverride: string | undefined,
-): { provider: string; modelId: string } | undefined {
+): { provider: string; modelId: string; thinkingLevel?: SupportedThinkingLevel } | undefined {
   if (!modelOverride) {
     return undefined;
   }
@@ -189,9 +216,18 @@ function parseModelOverride(
     throw new Error("Model override must use provider/model format");
   }
 
+  const lastColonIndex = modelOverride.lastIndexOf(":");
+  const lastSlashIndex = modelOverride.lastIndexOf("/");
+  const suffix =
+    lastColonIndex > lastSlashIndex ? modelOverride.slice(lastColonIndex + 1) : undefined;
+  const thinkingLevel = parseThinkingLevel(suffix);
+  const rawModel = thinkingLevel ? modelOverride.slice(0, lastColonIndex) : modelOverride;
+  const rawSeparatorIndex = rawModel.indexOf("/");
+
   return {
-    provider: modelOverride.slice(0, separatorIndex),
-    modelId: modelOverride.slice(separatorIndex + 1),
+    provider: rawModel.slice(0, rawSeparatorIndex),
+    modelId: rawModel.slice(rawSeparatorIndex + 1),
+    thinkingLevel,
   };
 }
 
@@ -200,12 +236,12 @@ async function resolveModel(
   settingsManager: SettingsLike,
   modelOverride: string | undefined,
   envModelOverride: string | undefined,
-): Promise<ConfiguredModel> {
+): Promise<{ model: ConfiguredModel; thinkingLevel?: SupportedThinkingLevel }> {
   const parsedOverride = parseModelOverride(modelOverride ?? envModelOverride);
   if (parsedOverride) {
     const overriddenModel = modelRegistry.find(parsedOverride.provider, parsedOverride.modelId);
     if (overriddenModel) {
-      return overriddenModel;
+      return { model: overriddenModel, thinkingLevel: parsedOverride.thinkingLevel };
     }
 
     const availableModels = await modelRegistry.getAvailable();
@@ -214,13 +250,13 @@ async function resolveModel(
         model.provider === parsedOverride.provider && model.name === parsedOverride.modelId,
     );
     if (namedMatch) {
-      return namedMatch;
+      return { model: namedMatch, thinkingLevel: parsedOverride.thinkingLevel };
     }
 
-    throw new Error(`Unknown model override: ${modelOverride}`);
+    throw new Error(`Unknown model override: ${modelOverride ?? envModelOverride}`);
   }
 
-  return resolveEffectiveModel({
+  const model = await resolveEffectiveModel({
     defaultProvider: settingsManager.getDefaultProvider(),
     defaultModelId: settingsManager.getDefaultModel(),
     findModel(provider: string, modelId: string): ConfiguredModel | undefined {
@@ -230,6 +266,53 @@ async function resolveModel(
       return modelRegistry.getAvailable();
     },
   });
+
+  return { model };
+}
+
+function renderMainHelp(): string {
+  return [
+    "Usage: cmdgen [options] [--] <prompt...>",
+    "       cmdgen init <shell>",
+    "",
+    "Generate commands by default. Use -- to separate prompts that start with flags.",
+    "",
+    "Options:",
+    "  -h, --help              Show help",
+    "      --model <model>     Override model (supports provider/model:thinking)",
+    "      --thinking <level>  Set thinking level: off|minimal|low|medium|high|xhigh",
+    "      --shell <shell>     Target shell for generated output",
+    "      --debug             Emit NDJSON diagnostics to stderr",
+    "      --debug-pretty      Emit human-readable diagnostics to stderr",
+    "",
+    "Environment:",
+    "  CMDGEN_MODEL            Default model when --model is absent",
+    "  CMDGEN_THINKING         Default thinking level when not set explicitly",
+    "  CMDGEN_DEBUG            Enable debug mode by default",
+    "",
+    "Commands:",
+    "  init <shell>            Print shell integration for zsh, bash, or nu",
+    "  shell <shell>           Backward-compatible alias for init",
+    "",
+    "Examples:",
+    "  cmdgen show repo root",
+    "  cmdgen --model gust/claude-sonnet-4-6 --thinking low show repo root",
+    "  cmdgen --model gust/kimi-k2.5-turbo:low show repo root",
+    "  cmdgen init zsh",
+  ].join("\n");
+}
+
+function renderInitHelp(): string {
+  return [
+    "Usage: cmdgen init <zsh|bash|nu>",
+    "",
+    "Print shell integration code for the selected shell.",
+    "",
+    "Examples:",
+    '  eval "$(cmdgen init zsh)"',
+    "  source <(cmdgen init bash)",
+    "  cmdgen init nu",
+  ].join("\n");
 }
 
 async function runGenerate(
@@ -238,28 +321,41 @@ async function runGenerate(
   initialDebugEnv: string | undefined,
 ): Promise<number> {
   const parsed = parseGenerateArgs(argv, deps.getEnvShell(), initialDebugEnv);
+  if (parsed.help) {
+    deps.stdout(`${renderMainHelp()}\n`);
+    return 0;
+  }
+
   const debugLogger = createDebugLogger(parsed.debug, deps.stderr, parsed.debugFormat);
   debugLogger.log("generate-args", {
     shell: parsed.shell,
     cwd: parsed.cwd,
     historyEntries: parsed.history.length,
     modelOverride: parsed.modelOverride,
+    thinkingLevel: parsed.thinkingLevel,
     query: parsed.query,
     debugFormat: parsed.debugFormat,
   });
 
   const { modelRegistry, settingsManager } = deps.createPiConfig(parsed.cwd);
-  const model = await resolveModel(
+  const resolved = await resolveModel(
     modelRegistry,
     settingsManager,
     parsed.modelOverride,
     deps.getEnvVar("CMDGEN_MODEL"),
   );
+  const model = resolved.model;
+  const thinkingLevel =
+    parsed.thinkingLevel ??
+    resolved.thinkingLevel ??
+    parseThinkingLevel(deps.getEnvVar("CMDGEN_THINKING")) ??
+    settingsManager.getDefaultThinkingLevel();
   debugLogger.log("resolved-model", {
     provider: model.provider,
     id: model.id,
     name: model.name,
     api: model.api,
+    thinkingLevel,
   });
   const requestTarget = deps.resolveRequestTarget(parsed.shell, parsed.query);
   debugLogger.log("request-target", requestTarget);
@@ -280,7 +376,7 @@ async function runGenerate(
         model,
         systemPrompt: prompt.systemPrompt,
         userPrompt: prompt.userPrompt,
-        thinkingLevel: settingsManager.getDefaultThinkingLevel(),
+        thinkingLevel,
         getAuth(resolvedModel: ConfiguredModel) {
           return modelRegistry.getApiKeyAndHeaders(resolvedModel);
         },
@@ -300,8 +396,21 @@ export async function main(argv: string[], deps: MainDeps = defaultDeps): Promis
   try {
     const command = argv[0];
 
+    if (!command || command === "-h" || command === "--help" || command === "help") {
+      deps.stdout(`${renderMainHelp()}\n`);
+      return 0;
+    }
+
     if (command === "shell" || command === "init") {
-      const shellName = normalizeShellName(argv[1] === "auto" ? deps.getEnvShell() : argv[1]);
+      const subcommandArg = argv[1];
+      if (!subcommandArg || subcommandArg === "-h" || subcommandArg === "--help") {
+        deps.stdout(`${renderInitHelp()}\n`);
+        return 0;
+      }
+
+      const shellName = normalizeShellName(
+        subcommandArg === "auto" ? deps.getEnvShell() : subcommandArg,
+      );
       deps.stdout(`${deps.emitShellInit(shellName, deps.getProgramPath())}\n`);
       return 0;
     }

@@ -5,6 +5,7 @@ import { main } from "../src/cli";
 type Deps = NonNullable<Parameters<typeof main>[1]>;
 
 type GenerateCall = Parameters<Deps["generateCommand"]>[0];
+type CompleteTextCall = Parameters<Deps["completeText"]>[0];
 
 function makeModel(id: string): Model<Api> {
   return {
@@ -147,6 +148,39 @@ describe("cli main", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toEqual(["wrapper-text\n"]);
+  });
+
+  test("writes concise top-level help", async () => {
+    const stdout: string[] = [];
+    const deps = createDeps({
+      stdout(text: string): void {
+        stdout.push(text);
+      },
+    });
+
+    const exitCode = await main(["--help"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join("")).toContain("Usage: cmdgen [options] [--] <prompt...>");
+    expect(stdout.join("")).toContain("Examples:");
+    expect(stdout.join("")).toContain("CMDGEN_MODEL");
+    expect(stdout.join("")).toContain("CMDGEN_THINKING");
+    expect(stdout.join("")).toContain("init <shell>");
+  });
+
+  test("writes focused init help", async () => {
+    const stdout: string[] = [];
+    const deps = createDeps({
+      stdout(text: string): void {
+        stdout.push(text);
+      },
+    });
+
+    const exitCode = await main(["init", "--help"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(stdout.join("")).toContain("Usage: cmdgen init <zsh|bash|nu>");
+    expect(stdout.join("")).toContain('eval "$(cmdgen init zsh)"');
   });
 
   test("generate command writes normalized output", async () => {
@@ -373,6 +407,139 @@ describe("cli main", () => {
 
     expect(exitCode).toBe(0);
     expect(enabledStates).toEqual([true]);
+  });
+
+  test("passes explicit thinking level through to inference", async () => {
+    const thinkingLevels: Array<string | undefined> = [];
+    const deps = createDeps({
+      async generateCommand(input: GenerateCall): Promise<string> {
+        await input.completeText({ systemPrompt: "system", userPrompt: "user" });
+        return "echo ok";
+      },
+      async completeText(input: CompleteTextCall): Promise<string> {
+        thinkingLevels.push(input.thinkingLevel);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["--thinking", "low", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(thinkingLevels).toEqual(["low"]);
+  });
+
+  test("supports --thinking=value syntax", async () => {
+    const thinkingLevels: Array<string | undefined> = [];
+    const deps = createDeps({
+      async generateCommand(input: GenerateCall): Promise<string> {
+        await input.completeText({ systemPrompt: "system", userPrompt: "user" });
+        return "echo ok";
+      },
+      async completeText(input: CompleteTextCall): Promise<string> {
+        thinkingLevels.push(input.thinkingLevel);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["--thinking=medium", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(thinkingLevels).toEqual(["medium"]);
+  });
+
+  test("uses CMDGEN_THINKING when the flag is absent", async () => {
+    const thinkingLevels: Array<string | undefined> = [];
+    const deps = createDeps({
+      getEnvVar(name: string): string | undefined {
+        return name === "CMDGEN_THINKING" ? "low" : undefined;
+      },
+      async generateCommand(input: GenerateCall): Promise<string> {
+        await input.completeText({ systemPrompt: "system", userPrompt: "user" });
+        return "echo ok";
+      },
+      async completeText(input: CompleteTextCall): Promise<string> {
+        thinkingLevels.push(input.thinkingLevel);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(thinkingLevels).toEqual(["low"]);
+  });
+
+  test("uses thinking suffix from --model when the flag is absent", async () => {
+    const lookedUp: string[] = [];
+    const thinkingLevels: Array<string | undefined> = [];
+    const deps = createDeps({
+      async generateCommand(input: GenerateCall): Promise<string> {
+        await input.completeText({ systemPrompt: "system", userPrompt: "user" });
+        return "echo ok";
+      },
+      async completeText(input: CompleteTextCall): Promise<string> {
+        thinkingLevels.push(input.thinkingLevel);
+        return "echo ok";
+      },
+      createPiConfig() {
+        return {
+          modelRegistry: {
+            find(provider: string, modelId: string) {
+              lookedUp.push(`${provider}/${modelId}`);
+              return makeModel(modelId);
+            },
+            getAvailable() {
+              return [];
+            },
+            async getApiKeyAndHeaders() {
+              return { ok: true as const, apiKey: "token-123" };
+            },
+          },
+          settingsManager: {
+            getDefaultProvider() {
+              return "gust";
+            },
+            getDefaultModel() {
+              return "gpt-5.4";
+            },
+            getDefaultThinkingLevel() {
+              return "high";
+            },
+          },
+        };
+      },
+    });
+
+    const exitCode = await main(["--model", "gust/gpt-5.4-mini:low", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(lookedUp).toContain("gust/gpt-5.4-mini");
+    expect(thinkingLevels).toEqual(["low"]);
+  });
+
+  test("prefers --thinking over model suffix and env thinking", async () => {
+    const thinkingLevels: Array<string | undefined> = [];
+    const deps = createDeps({
+      getEnvVar(name: string): string | undefined {
+        return name === "CMDGEN_THINKING" ? "minimal" : undefined;
+      },
+      async generateCommand(input: GenerateCall): Promise<string> {
+        await input.completeText({ systemPrompt: "system", userPrompt: "user" });
+        return "echo ok";
+      },
+      async completeText(input: CompleteTextCall): Promise<string> {
+        thinkingLevels.push(input.thinkingLevel);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(
+      ["--model", "gust/gpt-5.4-mini:low", "--thinking", "off", "show", "repo", "root"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(thinkingLevels).toEqual(["off"]);
   });
 
   test("passes debug mode from CMDGEN_DEBUG to generation", async () => {
