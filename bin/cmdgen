@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" != /* ]]; then
+    SOURCE="$DIR/$TARGET"
+  else
+    SOURCE="$TARGET"
+  fi
+done
+
+BIN_DIR="$(cd -P -- "$(dirname -- "$SOURCE")" && pwd)"
+ROOT="$(cd -- "$BIN_DIR/.." && pwd)"
 exec bun run --bun "$ROOT/src/cli.ts" "$@"
