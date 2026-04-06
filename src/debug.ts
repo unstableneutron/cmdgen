@@ -3,6 +3,8 @@ export type DebugLogger = {
   log(label: string, data?: unknown): void;
 };
 
+export type DebugFormat = "ndjson" | "pretty";
+
 export const disabledDebugLogger: DebugLogger = {
   enabled: false,
   log() {},
@@ -38,7 +40,23 @@ function toDebugEntry(event: string, data: unknown): DebugEntry {
   };
 }
 
-export function createDebugLogger(enabled: boolean, write: (text: string) => void): DebugLogger {
+function formatPrettyEntry(entry: DebugEntry): string {
+  if (entry.data === null) {
+    return `[${entry.ts}] ${entry.source} ${entry.event}\n`;
+  }
+
+  if (typeof entry.data === "string") {
+    return `[${entry.ts}] ${entry.source} ${entry.event}: ${entry.data}\n`;
+  }
+
+  return `[${entry.ts}] ${entry.source} ${entry.event}\n${JSON.stringify(entry.data, null, 2)}\n`;
+}
+
+export function createDebugLogger(
+  enabled: boolean,
+  write: (text: string) => void,
+  format: DebugFormat = "ndjson",
+): DebugLogger {
   if (!enabled) {
     return disabledDebugLogger;
   }
@@ -46,7 +64,8 @@ export function createDebugLogger(enabled: boolean, write: (text: string) => voi
   return {
     enabled: true,
     log(event: string, data?: unknown): void {
-      write(`${JSON.stringify(toDebugEntry(event, data))}\n`);
+      const entry = toDebugEntry(event, data);
+      write(format === "pretty" ? formatPrettyEntry(entry) : `${JSON.stringify(entry)}\n`);
     },
   };
 }

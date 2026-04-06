@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPiConfig } from "./config";
-import { createDebugLogger, type DebugLogger } from "./debug";
+import { createDebugLogger, type DebugFormat, type DebugLogger } from "./debug";
 import {
   detectEnvironmentMetadata,
   formatEnvironmentMetadata,
@@ -92,6 +92,7 @@ type ParsedGenerateArgs = {
   query: string;
   modelOverride?: string;
   debug: boolean;
+  debugFormat: DebugFormat;
 };
 
 function normalizeShellName(shellName: string | undefined): string {
@@ -118,8 +119,12 @@ function splitOnDoubleDash(argv: string[]): { optionArgs: string[]; queryArgs: s
   };
 }
 
-function isDebugEnabled(flagEnabled: boolean | undefined, envValue: string | undefined): boolean {
-  if (flagEnabled) {
+function isDebugEnabled(
+  flagEnabled: boolean,
+  prettyEnabled: boolean,
+  envValue: string | undefined,
+): boolean {
+  if (flagEnabled || prettyEnabled) {
     return true;
   }
 
@@ -145,6 +150,7 @@ function parseGenerateArgs(
       "history-entry": { type: "string", multiple: true },
       model: { type: "string" },
       debug: { type: "boolean" },
+      "debug-pretty": { type: "boolean" },
     },
     allowPositionals: true,
     strict: false,
@@ -158,6 +164,7 @@ function parseGenerateArgs(
     ? values["history-entry"].filter((entry): entry is string => typeof entry === "string")
     : [];
   const modelOverride = typeof values.model === "string" ? values.model : undefined;
+  const prettyDebug = values["debug-pretty"] === true;
 
   return {
     shell,
@@ -165,7 +172,8 @@ function parseGenerateArgs(
     history,
     query: queryWords.join(" ").trim(),
     modelOverride,
-    debug: isDebugEnabled(values.debug === true, debugEnv),
+    debug: isDebugEnabled(values.debug === true, prettyDebug, debugEnv),
+    debugFormat: prettyDebug ? "pretty" : "ndjson",
   };
 }
 
@@ -223,74 +231,79 @@ async function resolveModel(
   });
 }
 
+async function runGenerate(
+  argv: string[],
+  deps: MainDeps,
+  initialDebugEnv: string | undefined,
+): Promise<number> {
+  const parsed = parseGenerateArgs(argv, deps.getEnvShell(), initialDebugEnv);
+  const debugLogger = createDebugLogger(parsed.debug, deps.stderr, parsed.debugFormat);
+  debugLogger.log("generate-args", {
+    shell: parsed.shell,
+    cwd: parsed.cwd,
+    historyEntries: parsed.history.length,
+    modelOverride: parsed.modelOverride,
+    query: parsed.query,
+    debugFormat: parsed.debugFormat,
+  });
+
+  const { modelRegistry, settingsManager } = deps.createPiConfig(parsed.cwd);
+  const model = await resolveModel(modelRegistry, settingsManager, parsed.modelOverride);
+  debugLogger.log("resolved-model", {
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    api: model.api,
+  });
+  const requestTarget = deps.resolveRequestTarget(parsed.shell, parsed.query);
+  debugLogger.log("request-target", requestTarget);
+  const environment = deps.detectEnvironmentMetadata({
+    shell: parsed.shell,
+    cwd: parsed.cwd,
+  });
+  const environmentText = deps.formatEnvironmentMetadata(environment);
+  debugLogger.log("environment", environment);
+  const output = await deps.generateCommand({
+    query: parsed.query,
+    history: parsed.history,
+    availableCommands: environment.availableCommands,
+    environmentText,
+    requestTarget,
+    completeText(prompt: string): Promise<string> {
+      return deps.completeText({
+        model,
+        prompt,
+        thinkingLevel: settingsManager.getDefaultThinkingLevel(),
+        getAuth(resolvedModel: ConfiguredModel) {
+          return modelRegistry.getApiKeyAndHeaders(resolvedModel);
+        },
+        debugLogger,
+      });
+    },
+    debugLogger,
+  });
+
+  deps.stdout(`${output}\n`);
+  return 0;
+}
+
 export async function main(argv: string[], deps: MainDeps = defaultDeps): Promise<number> {
   let debugLogger: DebugLogger = createDebugLogger(false, deps.stderr);
 
   try {
     const command = argv[0];
 
-    if (command === "shell") {
+    if (command === "shell" || command === "init") {
       const shellName = normalizeShellName(argv[1] === "auto" ? deps.getEnvShell() : argv[1]);
       deps.stdout(`${deps.emitShellInit(shellName, deps.getProgramPath())}\n`);
       return 0;
     }
 
     if (command === "generate") {
-      const parsed = parseGenerateArgs(
-        argv.slice(1),
-        deps.getEnvShell(),
-        deps.getEnvVar("CMDGEN_DEBUG"),
-      );
-      debugLogger = createDebugLogger(parsed.debug, deps.stderr);
-      debugLogger.log("generate-args", {
-        shell: parsed.shell,
-        cwd: parsed.cwd,
-        historyEntries: parsed.history.length,
-        modelOverride: parsed.modelOverride,
-        query: parsed.query,
-      });
-
-      const { modelRegistry, settingsManager } = deps.createPiConfig(parsed.cwd);
-      const model = await resolveModel(modelRegistry, settingsManager, parsed.modelOverride);
-      debugLogger.log("resolved-model", {
-        provider: model.provider,
-        id: model.id,
-        name: model.name,
-        api: model.api,
-      });
-      const requestTarget = deps.resolveRequestTarget(parsed.shell, parsed.query);
-      debugLogger.log("request-target", requestTarget);
-      const environment = deps.detectEnvironmentMetadata({
-        shell: parsed.shell,
-        cwd: parsed.cwd,
-      });
-      const environmentText = deps.formatEnvironmentMetadata(environment);
-      debugLogger.log("environment", environment);
-      const output = await deps.generateCommand({
-        query: parsed.query,
-        history: parsed.history,
-        availableCommands: environment.availableCommands,
-        environmentText,
-        requestTarget,
-        completeText(prompt: string): Promise<string> {
-          return deps.completeText({
-            model,
-            prompt,
-            thinkingLevel: settingsManager.getDefaultThinkingLevel(),
-            getAuth(resolvedModel: ConfiguredModel) {
-              return modelRegistry.getApiKeyAndHeaders(resolvedModel);
-            },
-            debugLogger,
-          });
-        },
-        debugLogger,
-      });
-
-      deps.stdout(`${output}\n`);
-      return 0;
+      return await runGenerate(argv.slice(1), deps, deps.getEnvVar("CMDGEN_DEBUG"));
     }
 
-    throw new Error("Usage: cmdgen <generate|shell>");
+    return await runGenerate(argv, deps, deps.getEnvVar("CMDGEN_DEBUG"));
   } catch (error) {
     debugLogger.log("error", { message: error instanceof Error ? error.message : String(error) });
     deps.stderr(`${error instanceof Error ? error.message : String(error)}\n`);

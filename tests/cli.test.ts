@@ -132,6 +132,23 @@ describe("cli main", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("init command writes wrapper text", async () => {
+    const stdout: string[] = [];
+    const deps = createDeps({
+      emitShellInit(): string {
+        return "wrapper-text";
+      },
+      stdout(text: string): void {
+        stdout.push(text);
+      },
+    });
+
+    const exitCode = await main(["init", "zsh"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toEqual(["wrapper-text\n"]);
+  });
+
   test("generate command writes normalized output", async () => {
     const stdout: string[] = [];
     const deps = createDeps({
@@ -161,6 +178,65 @@ describe("cli main", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toEqual(["echo show repo root\n"]);
+  });
+
+  test("bare invocation defaults to generation", async () => {
+    const queries: string[] = [];
+    const deps = createDeps({
+      async generateCommand({ query }: GenerateCall): Promise<string> {
+        queries.push(query);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(queries).toEqual(["show repo root"]);
+  });
+
+  test("bare invocation supports generation flags", async () => {
+    const queries: string[] = [];
+    const lookedUp: string[] = [];
+    const deps = createDeps({
+      async generateCommand({ query }: GenerateCall): Promise<string> {
+        queries.push(query);
+        return "echo ok";
+      },
+      createPiConfig() {
+        return {
+          modelRegistry: {
+            find(provider: string, modelId: string) {
+              lookedUp.push(`${provider}/${modelId}`);
+              return makeModel(modelId);
+            },
+            getAvailable() {
+              return [];
+            },
+            async getApiKeyAndHeaders() {
+              return { ok: true as const, apiKey: "token-123" };
+            },
+          },
+          settingsManager: {
+            getDefaultProvider() {
+              return "gust";
+            },
+            getDefaultModel() {
+              return "gpt-5.4";
+            },
+            getDefaultThinkingLevel() {
+              return "high";
+            },
+          },
+        };
+      },
+    });
+
+    const exitCode = await main(["--model", "gust/gpt-5.4-mini", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(queries).toEqual(["show repo root"]);
+    expect(lookedUp).toContain("gust/gpt-5.4-mini");
   });
 
   test("passes debug mode from --debug to generation", async () => {
