@@ -10,7 +10,7 @@ export async function generateCommand(options: {
   availableCommands: string[];
   environmentText: string;
   requestTarget: RequestTarget;
-  completeText: (prompt: string) => Promise<string>;
+  completeText: (prompt: { systemPrompt: string; userPrompt: string }) => Promise<string>;
   debugLogger: DebugLogger;
 }): Promise<string> {
   const query = options.query.trim();
@@ -28,8 +28,9 @@ export async function generateCommand(options: {
     requestedLanguage: options.requestTarget.requestedLanguage,
   });
   options.debugLogger.log("prompt-built", {
-    query,
     requestTarget: options.requestTarget,
+    systemPrompt: prompt.systemPrompt,
+    userPrompt: prompt.userPrompt,
   });
 
   const raw = await options.completeText(prompt);

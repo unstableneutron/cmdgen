@@ -269,10 +269,11 @@ async function runGenerate(
     availableCommands: environment.availableCommands,
     environmentText,
     requestTarget,
-    completeText(prompt: string): Promise<string> {
+    completeText(prompt: { systemPrompt: string; userPrompt: string }): Promise<string> {
       return deps.completeText({
         model,
-        prompt,
+        systemPrompt: prompt.systemPrompt,
+        userPrompt: prompt.userPrompt,
         thinkingLevel: settingsManager.getDefaultThinkingLevel(),
         getAuth(resolvedModel: ConfiguredModel) {
           return modelRegistry.getApiKeyAndHeaders(resolvedModel);

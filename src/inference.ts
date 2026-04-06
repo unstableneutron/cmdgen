@@ -24,7 +24,8 @@ export type ResolvedRequestAuth =
 
 export type CompleteTextInput = {
   model: Model<Api>;
-  prompt: string;
+  systemPrompt: string;
+  userPrompt: string;
   thinkingLevel?: string;
   getAuth: (model: Model<Api>) => Promise<ResolvedRequestAuth>;
   debugLogger: DebugLogger;
@@ -138,7 +139,8 @@ export function createCompleteText(options?: {
     }
 
     const context = {
-      messages: [{ role: "user" as const, content: input.prompt, timestamp: Date.now() }],
+      systemPrompt: input.systemPrompt,
+      messages: [{ role: "user" as const, content: input.userPrompt, timestamp: Date.now() }],
     };
     const requestOptions = buildRequestOptions(input, auth);
 

@@ -44,7 +44,7 @@ function makeStream(events: AssistantMessageEvent[]) {
 }
 
 describe("createCompleteText", () => {
-  test("passes resolved auth into completeSimple", async () => {
+  test("passes systemPrompt and user message into completeSimple", async () => {
     const completeSimpleFn = vi.fn(async () => ({
       content: [{ type: "text", text: "pwd" }],
       errorMessage: undefined,
@@ -56,7 +56,8 @@ describe("createCompleteText", () => {
 
     const result = await completeText({
       model: makeModel(),
-      prompt: "show repo root",
+      systemPrompt: "You generate commands.",
+      userPrompt: "show repo root",
       thinkingLevel: "high",
       getAuth: async () => ({
         ok: true,
@@ -69,7 +70,10 @@ describe("createCompleteText", () => {
     expect(result).toBe("pwd");
     expect(completeSimpleFn).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "gust", id: "gpt-5.4" }),
-      expect.objectContaining({ messages: expect.any(Array) }),
+      expect.objectContaining({
+        systemPrompt: "You generate commands.",
+        messages: [expect.objectContaining({ role: "user", content: "show repo root" })],
+      }),
       expect.objectContaining({
         apiKey: "token-123",
         headers: { "x-test": "1" },
@@ -159,7 +163,8 @@ describe("createCompleteText", () => {
 
     const result = await completeText({
       model: makeModel(),
-      prompt: "show repo root",
+      systemPrompt: "You generate commands.",
+      userPrompt: "show repo root",
       thinkingLevel: "high",
       getAuth: async () => ({
         ok: true,
@@ -176,6 +181,14 @@ describe("createCompleteText", () => {
 
     expect(result).toBe("pwd");
     expect(streamSimpleFn).toHaveBeenCalledOnce();
+    expect(streamSimpleFn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        systemPrompt: "You generate commands.",
+        messages: [expect.objectContaining({ role: "user", content: "show repo root" })],
+      }),
+      expect.anything(),
+    );
     expect(logs.map((entry) => entry.label)).toContain("provider-payload");
     expect(logs.map((entry) => entry.label)).toContain("model-stream-event");
     expect(logs.map((entry) => entry.label)).toContain("model-response-text");
@@ -193,7 +206,8 @@ describe("createCompleteText", () => {
 
     await completeText({
       model: makeModel(),
-      prompt: "show repo root",
+      systemPrompt: "You generate commands.",
+      userPrompt: "show repo root",
       thinkingLevel: "off",
       getAuth: async () => ({ ok: true, apiKey: "token-123" }),
       debugLogger: { enabled: false, log() {} },
@@ -217,7 +231,8 @@ describe("createCompleteText", () => {
     await expect(
       completeText({
         model: makeModel(),
-        prompt: "show repo root",
+        systemPrompt: "You generate commands.",
+        userPrompt: "show repo root",
         thinkingLevel: "high",
         getAuth: async () => ({ ok: false, error: "No API key for provider: gust" }),
         debugLogger: { enabled: false, log() {} },

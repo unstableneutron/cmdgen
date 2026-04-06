@@ -3,15 +3,16 @@ import { generateCommand } from "../src/generate";
 import { resolveRequestTarget } from "../src/request-target";
 
 describe("generateCommand", () => {
-  test("passes requestTarget through to prompt generation", async () => {
+  test("passes structured prompts through to inference", async () => {
     const command = await generateCommand({
       query: "list directories in cwd in python",
       history: [],
       availableCommands: ["uv", "bun"],
       environmentText: "Available commands: uv, bun",
       requestTarget: resolveRequestTarget("/bin/zsh", "list directories in cwd in python"),
-      completeText: async (prompt) => {
-        expect(prompt).toContain("Implementation target: python");
+      completeText: async ({ systemPrompt, userPrompt }) => {
+        expect(systemPrompt).toContain("Implementation target: python");
+        expect(userPrompt).toBe("list directories in cwd in python");
         return "uv run --isolated python - <<'PY'\nprint('ok')\nPY";
       },
       debugLogger: { enabled: false, log() {} },
