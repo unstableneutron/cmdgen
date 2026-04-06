@@ -239,6 +239,127 @@ describe("cli main", () => {
     expect(lookedUp).toContain("gust/gpt-5.4-mini");
   });
 
+  test("supports --model=value syntax", async () => {
+    const lookedUp: string[] = [];
+    const deps = createDeps({
+      createPiConfig() {
+        return {
+          modelRegistry: {
+            find(provider: string, modelId: string) {
+              lookedUp.push(`${provider}/${modelId}`);
+              return makeModel(modelId);
+            },
+            getAvailable() {
+              return [];
+            },
+            async getApiKeyAndHeaders() {
+              return { ok: true as const, apiKey: "token-123" };
+            },
+          },
+          settingsManager: {
+            getDefaultProvider() {
+              return "gust";
+            },
+            getDefaultModel() {
+              return "gpt-5.4";
+            },
+            getDefaultThinkingLevel() {
+              return "high";
+            },
+          },
+        };
+      },
+    });
+
+    const exitCode = await main(["--model=gust/gpt-5.4-mini", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(lookedUp).toContain("gust/gpt-5.4-mini");
+  });
+
+  test("uses CMDGEN_MODEL when --model is absent", async () => {
+    const lookedUp: string[] = [];
+    const deps = createDeps({
+      getEnvVar(name: string): string | undefined {
+        return name === "CMDGEN_MODEL" ? "gust/gpt-5.4-mini" : undefined;
+      },
+      createPiConfig() {
+        return {
+          modelRegistry: {
+            find(provider: string, modelId: string) {
+              lookedUp.push(`${provider}/${modelId}`);
+              return makeModel(modelId);
+            },
+            getAvailable() {
+              return [];
+            },
+            async getApiKeyAndHeaders() {
+              return { ok: true as const, apiKey: "token-123" };
+            },
+          },
+          settingsManager: {
+            getDefaultProvider() {
+              return "gust";
+            },
+            getDefaultModel() {
+              return "gpt-5.4";
+            },
+            getDefaultThinkingLevel() {
+              return "high";
+            },
+          },
+        };
+      },
+    });
+
+    const exitCode = await main(["show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(lookedUp).toContain("gust/gpt-5.4-mini");
+  });
+
+  test("prefers --model over CMDGEN_MODEL", async () => {
+    const lookedUp: string[] = [];
+    const deps = createDeps({
+      getEnvVar(name: string): string | undefined {
+        return name === "CMDGEN_MODEL" ? "gust/gpt-5.4" : undefined;
+      },
+      createPiConfig() {
+        return {
+          modelRegistry: {
+            find(provider: string, modelId: string) {
+              lookedUp.push(`${provider}/${modelId}`);
+              return makeModel(modelId);
+            },
+            getAvailable() {
+              return [];
+            },
+            async getApiKeyAndHeaders() {
+              return { ok: true as const, apiKey: "token-123" };
+            },
+          },
+          settingsManager: {
+            getDefaultProvider() {
+              return "gust";
+            },
+            getDefaultModel() {
+              return "gpt-5.4";
+            },
+            getDefaultThinkingLevel() {
+              return "high";
+            },
+          },
+        };
+      },
+    });
+
+    const exitCode = await main(["--model", "gust/gpt-5.4-mini", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(lookedUp).toContain("gust/gpt-5.4-mini");
+    expect(lookedUp).not.toContain("gust/gpt-5.4");
+  });
+
   test("passes debug mode from --debug to generation", async () => {
     const enabledStates: boolean[] = [];
     const deps = createDeps({

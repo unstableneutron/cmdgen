@@ -199,8 +199,9 @@ async function resolveModel(
   modelRegistry: ModelRegistryLike,
   settingsManager: SettingsLike,
   modelOverride: string | undefined,
+  envModelOverride: string | undefined,
 ): Promise<ConfiguredModel> {
-  const parsedOverride = parseModelOverride(modelOverride);
+  const parsedOverride = parseModelOverride(modelOverride ?? envModelOverride);
   if (parsedOverride) {
     const overriddenModel = modelRegistry.find(parsedOverride.provider, parsedOverride.modelId);
     if (overriddenModel) {
@@ -248,7 +249,12 @@ async function runGenerate(
   });
 
   const { modelRegistry, settingsManager } = deps.createPiConfig(parsed.cwd);
-  const model = await resolveModel(modelRegistry, settingsManager, parsed.modelOverride);
+  const model = await resolveModel(
+    modelRegistry,
+    settingsManager,
+    parsed.modelOverride,
+    deps.getEnvVar("CMDGEN_MODEL"),
+  );
   debugLogger.log("resolved-model", {
     provider: model.provider,
     id: model.id,
