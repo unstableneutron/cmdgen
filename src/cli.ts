@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPiConfig } from "./config";
+import { createDebugLogger, type DebugLogger } from "./debug";
 import {
   detectEnvironmentMetadata,
   formatEnvironmentMetadata,
@@ -43,6 +44,7 @@ type MainDeps = {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   getEnvShell: () => string | undefined;
+  getEnvVar: (name: string) => string | undefined;
   getProgramPath: () => string;
   createPiConfig: (cwd?: string) => PiConfigLike;
   detectEnvironmentMetadata: (options?: {
@@ -68,6 +70,9 @@ const defaultDeps: MainDeps = {
   getEnvShell(): string | undefined {
     return process.env.SHELL;
   },
+  getEnvVar(name: string): string | undefined {
+    return process.env[name];
+  },
   getProgramPath(): string {
     const currentFile = fileURLToPath(import.meta.url);
     return join(dirname(currentFile), "..", "bin", "cmdgen");
@@ -86,6 +91,7 @@ type ParsedGenerateArgs = {
   history: string[];
   query: string;
   modelOverride?: string;
+  debug: boolean;
 };
 
 function normalizeShellName(shellName: string | undefined): string {
@@ -112,7 +118,24 @@ function splitOnDoubleDash(argv: string[]): { optionArgs: string[]; queryArgs: s
   };
 }
 
-function parseGenerateArgs(argv: string[], envShell: string | undefined): ParsedGenerateArgs {
+function isDebugEnabled(flagEnabled: boolean | undefined, envValue: string | undefined): boolean {
+  if (flagEnabled) {
+    return true;
+  }
+
+  if (!envValue) {
+    return false;
+  }
+
+  const normalized = envValue.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function parseGenerateArgs(
+  argv: string[],
+  envShell: string | undefined,
+  debugEnv: string | undefined,
+): ParsedGenerateArgs {
   const { optionArgs, queryArgs } = splitOnDoubleDash(argv);
   const { values, positionals } = parseArgs({
     args: optionArgs,
@@ -121,6 +144,7 @@ function parseGenerateArgs(argv: string[], envShell: string | undefined): Parsed
       cwd: { type: "string" },
       "history-entry": { type: "string", multiple: true },
       model: { type: "string" },
+      debug: { type: "boolean" },
     },
     allowPositionals: true,
     strict: false,
@@ -141,6 +165,7 @@ function parseGenerateArgs(argv: string[], envShell: string | undefined): Parsed
     history,
     query: queryWords.join(" ").trim(),
     modelOverride,
+    debug: isDebugEnabled(values.debug === true, debugEnv),
   };
 }
 
@@ -199,6 +224,8 @@ async function resolveModel(
 }
 
 export async function main(argv: string[], deps: MainDeps = defaultDeps): Promise<number> {
+  let debugLogger: DebugLogger = createDebugLogger(false, deps.stderr);
+
   try {
     const command = argv[0];
 
@@ -209,15 +236,36 @@ export async function main(argv: string[], deps: MainDeps = defaultDeps): Promis
     }
 
     if (command === "generate") {
-      const parsed = parseGenerateArgs(argv.slice(1), deps.getEnvShell());
+      const parsed = parseGenerateArgs(
+        argv.slice(1),
+        deps.getEnvShell(),
+        deps.getEnvVar("CMDGEN_DEBUG"),
+      );
+      debugLogger = createDebugLogger(parsed.debug, deps.stderr);
+      debugLogger.log("generate-args", {
+        shell: parsed.shell,
+        cwd: parsed.cwd,
+        historyEntries: parsed.history.length,
+        modelOverride: parsed.modelOverride,
+        query: parsed.query,
+      });
+
       const { modelRegistry, settingsManager } = deps.createPiConfig(parsed.cwd);
       const model = await resolveModel(modelRegistry, settingsManager, parsed.modelOverride);
+      debugLogger.log("resolved-model", {
+        provider: model.provider,
+        id: model.id,
+        name: model.name,
+        api: model.api,
+      });
       const requestTarget = deps.resolveRequestTarget(parsed.shell, parsed.query);
+      debugLogger.log("request-target", requestTarget);
       const environment = deps.detectEnvironmentMetadata({
         shell: parsed.shell,
         cwd: parsed.cwd,
       });
       const environmentText = deps.formatEnvironmentMetadata(environment);
+      debugLogger.log("environment", environment);
       const output = await deps.generateCommand({
         query: parsed.query,
         history: parsed.history,
@@ -232,8 +280,10 @@ export async function main(argv: string[], deps: MainDeps = defaultDeps): Promis
             getAuth(resolvedModel: ConfiguredModel) {
               return modelRegistry.getApiKeyAndHeaders(resolvedModel);
             },
+            debugLogger,
           });
         },
+        debugLogger,
       });
 
       deps.stdout(`${output}\n`);
@@ -242,6 +292,7 @@ export async function main(argv: string[], deps: MainDeps = defaultDeps): Promis
 
     throw new Error("Usage: cmdgen <generate|shell>");
   } catch (error) {
+    debugLogger.log("error", { message: error instanceof Error ? error.message : String(error) });
     deps.stderr(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }

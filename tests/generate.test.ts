@@ -14,9 +14,37 @@ describe("generateCommand", () => {
         expect(prompt).toContain("Implementation target: python");
         return "uv run --isolated python - <<'PY'\nprint('ok')\nPY";
       },
+      debugLogger: { enabled: false, log() {} },
     });
 
     expect(command).toContain("uv run --isolated python");
+  });
+
+  test("logs raw and final output when debug is enabled", async () => {
+    const events: Array<{ label: string; data: unknown }> = [];
+
+    const command = await generateCommand({
+      query: "show repo root",
+      history: [],
+      availableCommands: ["uv", "bun"],
+      environmentText: "Available commands: uv, bun",
+      requestTarget: resolveRequestTarget("/bin/zsh", "show repo root"),
+      completeText: async () => "```bash\npwd\n```",
+      debugLogger: {
+        enabled: true,
+        log(label: string, data?: unknown): void {
+          events.push({ label, data });
+        },
+      },
+    });
+
+    expect(command).toBe("pwd");
+    expect(events.map((event) => event.label)).toEqual([
+      "prompt-built",
+      "model-output-raw",
+      "model-output-normalized",
+      "command-final",
+    ]);
   });
 
   test("wraps raw python output into a runnable shell command", async () => {
@@ -27,6 +55,7 @@ describe("generateCommand", () => {
       environmentText: "Available commands: uv, bun",
       requestTarget: resolveRequestTarget("/bin/zsh", "list directories in cwd in python"),
       completeText: async () => "import os\nprint(os.getcwd())",
+      debugLogger: { enabled: false, log() {} },
     });
 
     expect(command).toContain("uv run --isolated python - <<'PY'");
@@ -41,6 +70,7 @@ describe("generateCommand", () => {
       environmentText: "Available commands: bun",
       requestTarget: resolveRequestTarget("/bin/zsh", "count files in cwd in javascript"),
       completeText: async () => "console.log('ok')",
+      debugLogger: { enabled: false, log() {} },
     });
 
     expect(command).toContain("bun - <<'JS'");
@@ -56,6 +86,7 @@ describe("generateCommand", () => {
         environmentText: "Current shell: /bin/zsh",
         requestTarget: resolveRequestTarget("/bin/zsh", "show repo root"),
         completeText: async () => "pwd",
+        debugLogger: { enabled: false, log() {} },
       }),
     ).rejects.toThrow("Query is required");
   });

@@ -1,3 +1,4 @@
+import type { DebugLogger } from "./debug";
 import type { RequestTarget } from "./request-target";
 import { ensureShellRunnableOutput } from "./language-wrapping";
 import { normalizeOutput } from "./normalize";
@@ -10,6 +11,7 @@ export async function generateCommand(options: {
   environmentText: string;
   requestTarget: RequestTarget;
   completeText: (prompt: string) => Promise<string>;
+  debugLogger: DebugLogger;
 }): Promise<string> {
   const query = options.query.trim();
   if (!query) {
@@ -25,13 +27,22 @@ export async function generateCommand(options: {
     implementationTarget: options.requestTarget.implementationTarget,
     requestedLanguage: options.requestTarget.requestedLanguage,
   });
+  options.debugLogger.log("prompt-built", {
+    query,
+    requestTarget: options.requestTarget,
+  });
 
   const raw = await options.completeText(prompt);
+  options.debugLogger.log("model-output-raw", raw);
   const normalized = normalizeOutput(raw);
+  options.debugLogger.log("model-output-normalized", normalized);
 
-  return ensureShellRunnableOutput({
+  const finalCommand = ensureShellRunnableOutput({
     output: normalized,
     availableCommands: options.availableCommands,
     requestTarget: options.requestTarget,
   });
+  options.debugLogger.log("command-final", finalCommand);
+
+  return finalCommand;
 }

@@ -31,6 +31,9 @@ function createDeps(overrides: Partial<Deps> = {}): Deps {
     getEnvShell(): string | undefined {
       return "/bin/zsh";
     },
+    getEnvVar(_name: string): string | undefined {
+      return undefined;
+    },
     getProgramPath(): string {
       return "/tmp/cmdgen";
     },
@@ -158,6 +161,39 @@ describe("cli main", () => {
 
     expect(exitCode).toBe(0);
     expect(stdout).toEqual(["echo show repo root\n"]);
+  });
+
+  test("passes debug mode from --debug to generation", async () => {
+    const enabledStates: boolean[] = [];
+    const deps = createDeps({
+      async generateCommand({ debugLogger }: GenerateCall): Promise<string> {
+        enabledStates.push(debugLogger.enabled);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["generate", "--debug", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(enabledStates).toEqual([true]);
+  });
+
+  test("passes debug mode from CMDGEN_DEBUG to generation", async () => {
+    const enabledStates: boolean[] = [];
+    const deps = createDeps({
+      getEnvVar(name: string): string | undefined {
+        return name === "CMDGEN_DEBUG" ? "1" : undefined;
+      },
+      async generateCommand({ debugLogger }: GenerateCall): Promise<string> {
+        enabledStates.push(debugLogger.enabled);
+        return "echo ok";
+      },
+    });
+
+    const exitCode = await main(["generate", "show", "repo", "root"], deps);
+
+    expect(exitCode).toBe(0);
+    expect(enabledStates).toEqual([true]);
   });
 
   test("parses options on the left of -- and keeps query text on the right", async () => {
