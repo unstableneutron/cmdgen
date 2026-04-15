@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 type PackJson = Array<{
@@ -6,8 +8,16 @@ type PackJson = Array<{
 }>;
 
 describe("packed artifact", () => {
-  test("ships the built cli instead of the Bun wrapper", () => {
-    execFileSync("bun", ["run", "build"], { stdio: "pipe" });
+  test("ships the built cli artifact without tracking dist in git", () => {
+    execFileSync("npm", ["run", "build"], { stdio: "pipe" });
+
+    expect(existsSync(resolve("dist/cli.js"))).toBe(true);
+    expect(() =>
+      execFileSync("git", ["ls-files", "--error-unmatch", "dist/cli.js"], {
+        encoding: "utf8",
+        stdio: "pipe",
+      }),
+    ).toThrow();
 
     const raw = execFileSync("npm", ["pack", "--dry-run", "--json"], {
       encoding: "utf8",
