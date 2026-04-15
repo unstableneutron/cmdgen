@@ -1,12 +1,15 @@
 {
   "name": "cmdgen",
   "version": "0.1.0",
-  "private": true,
   "bin": {
-    "cmdgen": "./bin/cmdgen"
+    "cmdgen": "./dist/cli.js"
   },
+  "files": ["dist"],
   "type": "module",
   "scripts": {
+    "build": "bun build --target=node --format=esm --packages=external --outfile=dist/cli.js --banner='#!/usr/bin/env node' ./src/bin.ts",
+    "prepare": "bun run build",
+    "prepack": "bun run build",
     "test": "vitest run",
     "check": "oxfmt . && oxlint --type-aware --type-check .",
     "fix": "oxfmt --write . && oxlint --type-aware --type-check --fix --fix-suggestions --fix-dangerously ."

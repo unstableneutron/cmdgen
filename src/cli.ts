@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { type Api, type Model } from "@mariozechner/pi-ai";
 import { parseArgs } from "node:util";
 import { dirname, join } from "node:path";
@@ -425,9 +424,4 @@ export async function main(argv: string[], deps: MainDeps = defaultDeps): Promis
     deps.stderr(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-}
-
-if (import.meta.main) {
-  const exitCode = await main(process.argv.slice(2));
-  process.exit(exitCode);
 }
