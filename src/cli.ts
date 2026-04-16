@@ -1,6 +1,5 @@
 import { type Api, type Model } from "@mariozechner/pi-ai";
 import { parseArgs } from "node:util";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPiConfig } from "./config";
 import { createDebugLogger, type DebugFormat, type DebugLogger } from "./debug";
@@ -73,8 +72,12 @@ const defaultDeps: MainDeps = {
     return process.env[name];
   },
   getProgramPath(): string {
-    const currentFile = fileURLToPath(import.meta.url);
-    return join(dirname(currentFile), "..", "bin", "cmdgen");
+    const launchedPath = process.env.CMDGEN_PROGRAM_PATH;
+    if (launchedPath) {
+      return launchedPath;
+    }
+
+    return process.argv[1] ?? fileURLToPath(import.meta.url);
   },
   createPiConfig,
   detectEnvironmentMetadata,

@@ -1,17 +1,20 @@
 {
   "name": "cmdgen",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "bin": {
-    "cmdgen": "./dist/cli.js"
+    "cmdgen": "./dist/cmdgen.js"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "scripts": {
-    "build:bun": "mkdir -p dist && bun build --target=node --format=esm --packages=external --outfile=dist/cli.js --banner='#!/usr/bin/env node' ./src/bin.ts",
-    "build:rolldown": "mkdir -p dist && npx rolldown ./src/bin.ts --platform node --format esm --inline-dynamic-imports --file dist/cli.js --external @mariozechner/pi-ai,@mariozechner/pi-coding-agent --banner '#!/usr/bin/env node'",
-    "build": "if command -v bun >/dev/null 2>&1; then npm run build:bun; else npm run build:rolldown; fi",
+    "build:binary": "mkdir -p dist && bun build --compile --outfile=dist/cmdgen ./src/bin.ts",
+    "build:script:bun": "mkdir -p dist && bun build --target=node --format=esm --outfile=dist/cli.js --banner='#!/usr/bin/env node' ./src/bin.ts",
+    "build:script:rolldown": "mkdir -p dist && npx rolldown ./src/bin.ts --platform node --format esm --inline-dynamic-imports --file dist/cli.js --banner '#!/usr/bin/env node'",
+    "build:launcher:bun": "mkdir -p dist && bun build --target=node --format=esm --outfile=dist/cmdgen.js --banner='#!/usr/bin/env node' ./src/launcher.ts",
+    "build:launcher:rolldown": "mkdir -p dist && npx rolldown ./src/launcher.ts --platform node --format esm --inline-dynamic-imports --file dist/cmdgen.js --banner '#!/usr/bin/env node'",
+    "build": "if command -v bun >/dev/null 2>&1; then npm run build:script:bun && npm run build:binary && npm run build:launcher:bun; else npm run build:script:rolldown && npm run build:launcher:rolldown; fi",
     "prepare": "npm run build",
     "prepack": "npm run build",
     "prepublishOnly": "npm run build",
